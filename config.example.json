@@ -1,0 +1,7 @@
+{
+    "Token": "<YOUR-DISCORD-TOKEN>",
+    "GuildID": "<YOUR-DISCORD-GUILD>",
+    "StartCmd": "screen -S minecraft -d -m bash server_launch_mohist.sh",
+    "StopCmd": "screen -X stuff \"stop\\015\"",
+    "CheckCmd": "screen -ls | grep minecraft"
+}
