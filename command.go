@@ -35,11 +35,39 @@ func waitServer(config *AppConfig, expectStopping bool) error {
 	return nil
 }
 
+func startServer(config *AppConfig, logger *zap.SugaredLogger) error {
+	if err := runCommand(config.StartCmd); err != nil {
+		return err
+	}
+	if err := waitServer(config, false); err != nil {
+		return err
+	}
+	return nil
+}
+
+func stopServer(config *AppConfig, logger *zap.SugaredLogger) error {
+	if err := runCommand(config.StopCmd); err != nil {
+		return err
+	}
+	if err := waitServer(config, true); err != nil {
+		return err
+	}
+	return nil
+}
+
 func registerCommands(config *AppConfig, s *discordgo.Session, logger *zap.SugaredLogger) ([]*discordgo.ApplicationCommand, error) {
 	commands := []*discordgo.ApplicationCommand{
 		{
 			Name:        "minecraft-restart",
 			Description: "Minecraftサーバを再起動します",
+		},
+		{
+			Name:        "minecraft-start",
+			Description: "Minecraftサーバを起動します（既に起動中の場合は何もしません）",
+		},
+		{
+			Name:        "minecraft-stop",
+			Description: "Minecraftサーバを停止します",
 		},
 		{
 			Name:        "minecraft-check",
@@ -59,26 +87,10 @@ func registerCommands(config *AppConfig, s *discordgo.Session, logger *zap.Sugar
 				return
 			}
 
-			err = runCommand(config.CheckCmd)
-			if err != nil {
-				// Server is not running
-				logger.Infoln("Check minecraft: ", err)
-			} else {
+			// Stop server if running
+			if err := runCommand(config.CheckCmd); err == nil {
 				// Server is running
-				err = runCommand(config.StopCmd)
-				if err != nil {
-					logger.Errorln("Failed to stop server: ", err)
-					_, err = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-						Content: "Minecraftサーバの停止に失敗しました",
-					})
-					if err != nil {
-						logger.Errorln("Failed to send message: ", err)
-						return
-					}
-					return
-				}
-				err = waitServer(config, true)
-				if err != nil {
+				if err := stopServer(config, logger); err != nil {
 					logger.Errorln("Failed to stop server: ", err)
 					_, err = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 						Content: "Minecraftサーバの停止に失敗しました",
@@ -91,20 +103,8 @@ func registerCommands(config *AppConfig, s *discordgo.Session, logger *zap.Sugar
 				}
 			}
 
-			err = runCommand(config.StartCmd)
-			if err != nil {
-				logger.Errorln("Failed to start server: ", err)
-				_, err = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-					Content: "Minecraftサーバの起動に失敗しました",
-				})
-				if err != nil {
-					logger.Errorln("Failed to send message: ", err)
-					return
-				}
-				return
-			}
-			err = waitServer(config, false)
-			if err != nil {
+			// Start server
+			if err := startServer(config, logger); err != nil {
 				logger.Errorln("Failed to start server: ", err)
 				_, err = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 					Content: "Minecraftサーバの起動に失敗しました",
@@ -124,10 +124,102 @@ func registerCommands(config *AppConfig, s *discordgo.Session, logger *zap.Sugar
 				return
 			}
 		},
+		"minecraft-start": func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+			err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Content: "Minecraftサーバを起動しています...",
+				},
+			})
+			if err != nil {
+				logger.Errorln("Failed to send message: ", err)
+				return
+			}
+
+			// Start server if not running
+			if err := runCommand(config.CheckCmd); err == nil {
+				// Server is running
+				_, err = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+					Content: "Minecraftサーバは既に起動中です",
+				})
+				if err != nil {
+					logger.Errorln("Failed to send message: ", err)
+					return
+				}
+				return
+			}
+
+			// Start server
+			if err := startServer(config, logger); err != nil {
+				logger.Errorln("Failed to start server: ", err)
+				_, err = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+					Content: "Minecraftサーバの起動に失敗しました",
+				})
+				if err != nil {
+					logger.Errorln("Failed to send message: ", err)
+					return
+				}
+				return
+			}
+
+			_, err = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+				Content: "Minecraftサーバを起動しました",
+			})
+			if err != nil {
+				logger.Errorln("Failed to send message: ", err)
+				return
+			}
+		},
+		"minecraft-stop": func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+			err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Content: "Minecraftサーバを停止しています...",
+				},
+			})
+			if err != nil {
+				logger.Errorln("Failed to send message: ", err)
+				return
+			}
+
+			// Start server if not running
+			if err := runCommand(config.CheckCmd); err != nil {
+				// Server is not running
+				_, err = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+					Content: "Minecraftサーバは既に停止しています",
+				})
+				if err != nil {
+					logger.Errorln("Failed to send message: ", err)
+					return
+				}
+				return
+			}
+
+			// Stop server
+			if err := stopServer(config, logger); err != nil {
+				logger.Errorln("Failed to stop server: ", err)
+				_, err = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+					Content: "Minecraftサーバの停止に失敗しました",
+				})
+				if err != nil {
+					logger.Errorln("Failed to send message: ", err)
+					return
+				}
+				return
+			}
+
+			_, err = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+				Content: "Minecraftサーバを停止しました",
+			})
+			if err != nil {
+				logger.Errorln("Failed to send message: ", err)
+				return
+			}
+		},
 		"minecraft-check": func(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			var content string
 			err := runCommand(config.CheckCmd)
-			if err == nil {
+			if err := runCommand(config.CheckCmd); err == nil {
 				content = "Minecraftサーバは起動しています"
 			} else {
 				logger.Infoln("Check minecraft: ", err)
